@@ -1,0 +1,69 @@
+# Consolidators and rolling windows
+class RetrospectiveVioletCrocodile(QCAlgorithm):
+
+    def Initialize(self):
+        self.SetStartDate(2018, 1, 1)  # Set Start Date
+        self.SetEndDate(2021, 1, 1)    #set End Date
+        self.SetCash(100000)  # Set Strategy Cash
+        #Add data for SPY and save SPY symbol to the self.symbol vaiable As to Resolution we will use minute data
+        self.symbol = self.AddEquity("SPY", Resolution.Minute).Symbol
+        #we will create a rolling window the source trade bar objects.we will use this rolling window to compare
+        #the current price SPY to the last closing price. for this we dont need to long rolling window which is for
+        #initialize its only hold up to 2 elements
+        self.rollingWindow = RollingWindow[TradeBar](2)
+        #we create a consolidate to the minutely SPY data.the objective of this consolidator is to consolidate
+        #Spy minutely bars to daily bars.As the third argument consolidate takes a consolidation Event handler
+        #that we have to create this is called everytime new daily bar
+        self.Consolidate(self.symbol, Resolution.Daily, self.CustomBarHandler)
+        
+        #we schedule custom method that is called 15 minutes before the market close.we can accomplish this
+        #with self.schedule.On inside of the initialize method as the date rule we specify our method should 
+        #be called everyday that SPY trades as the time rule which is 15 minute before the market close.note 
+        #that this will account for days where the market close earlie.for inferences our schedule method would
+        #be called a 12:45 instead of 15:45.since the market close early on that day
+        self.Schedule.On(self.DateRules.EveryDay(self.symbol),
+                         self.TimeRules.BeforeMarketClose(self.symbol, 15),
+                         self.ExitPositions)
+        
+    def OnData(self, data):
+        #check whether our rolling window IsReady. rolling window is ready.rolling window is ready ones it
+        #filled Up data.just like with indicate we can use IsReady attributes to check this.
+        if not self.rollingWindow.IsReady:
+            return
+        
+        #we want to check the current time we do this.since we want our algorithm to trade right after the
+        #market open and not anyother time.
+        if not(self.Time.hour == 9 and self.Time.minute == 31):
+            return
+        
+        #check if there was a Gap Up in SPY price. we do this like comparing in the open price of the 9:31
+        #minute bar with the close price of the daily bar of the previous day. this daily bar can be access we
+        #are rolling window. since the most recent data is in the beginning of rolling windows we index are
+        #rolling window with index 0.since we are only interested in those days where was an actual gap Up we
+        #multiply the previous days closing price by 1.01. this will ensure that this condition is only full
+        #filled if SPY price gap UP by 1% number is an absolutly arbitary choice.
+        if data[self.symbol].Open >= 1.01 * self.rollingWindow[0].Close:
+            #if this condition is fufilled we know that SPY price gap Up by 1%.since yesterday close in that
+            #case we want to establish a short spy position which we can achieve by passing -1 to set holdings
+            self.SetHoldings(self.symbol, -1)
+            
+        #for gap down and going long here we simply flipe the gradual equal sign the other way and multipl
+        #asset a closing price by 0.99 instead of 1.01.this condition will equal True if SPY price Gap down
+        #by 1%. if that the case we establish a long position
+        
+        elif data[self.symbol].Open <= 0.99 * self.rollingWindow[0].Close:
+            self.SetHoldings(self.symbol, 1)
+            
+    
+    def CustomBarHandler(self, bar):
+        #since we use a rolling window to access the previous days closing price we want to store daily trade bar
+        #objects.
+        #to add such a trade bar object we can use the add method.thats also exactly what we will do inside
+        #of a CustomBarHandler. the bar parameter of this method is the consolidated daily bar which we want to add
+        #to rolling window
+        self.rollingWindow.Add(bar)
+        
+    def ExitPositions(self):
+        self.Liquidate(self.symbol)
+        
+        
